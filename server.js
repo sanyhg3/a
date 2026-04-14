@@ -28,7 +28,68 @@ setInterval(async () => {
 let lastFrameHash = null;
 
 // --- THE SMOOTHNESS ENGINE ---
+let capturing = false;
+let lastInputTime = 0;
+
+function broadcastFrame(buffer) {
+  const hash = crypto.createHash('md5').update(buffer).digest('hex');
+
+  if (hash === lastFrameHash) return false;
+  lastFrameHash = hash;
+
+  let sentToAnyone = false;
+  for (const ws of CLIENTS) {
+    if (ws.readyState === 1 && ws.bufferedAmount <= 100000) {
+      ws.send(cachedMetaPayload);
+
+      const now = Date.now();
+      ws.send(JSON.stringify({
+        type: 'frame-meta',
+        ts: now
+      }));
+
+      ws.send(buffer);
+      sentToAnyone = true;
+    }
+  }
+  return sentToAnyone;
+}
+
+async function captureLoop() {
+  if (capturing) return;
+  capturing = true;
+
+  while (isDumpingFrames && browser.isPageReady() && CLIENTS.size > 0) {
+    let delay = 200;
+    try {
+      const screenshotPromise = browser.page.screenshot({
+        type: 'jpeg',
+        quality: 40,
+        optimizeForSpeed: true
+      });
+
+      // Do NOT await immediately → overlap work
+      const buffer = await screenshotPromise;
+
+      broadcastFrame(buffer);
+
+      // Adaptive timing: polling fast if recently interacted
+      if (Date.now() - lastInputTime <= 1000) {
+        delay = 16;
+      }
+    } catch (e) {
+      delay = 100;
+    }
+
+    await new Promise(r => setTimeout(r, delay));
+  }
+
+  capturing = false;
+}
+
 async function triggerRawDump() {
+  lastInputTime = Date.now();
+
   if (CLIENTS.size === 0) {
       isDumpingFrames = false;
       return;
@@ -44,42 +105,7 @@ async function triggerRawDump() {
   clearTimeout(dumpTimeout);
   dumpTimeout = setTimeout(() => { isDumpingFrames = false; }, 4000);
 
-  while (isDumpingFrames && browser.isPageReady() && CLIENTS.size > 0) {
-    try {
-      // 1. The Sweet Spot: JPEG 80% is extremely sharp but encodes incredibly fast!
-      const buffer = await browser.page.screenshot({ type: 'jpeg', quality: 80 });
-      
-      // Frame deduplication using MD5 hash (fast enough for small JPEGs)
-      const currentHash = crypto.createHash('md5').update(buffer).digest('hex');
-      if (currentHash === lastFrameHash) {
-        // Frame is identical, skip sending, just wait and try again
-        await new Promise(resolve => setTimeout(resolve, 16));
-        continue;
-      }
-      lastFrameHash = currentHash;
-
-      let sentToAnyone = false;
-      for (const ws of CLIENTS) {
-        // 2. The Zero-Latency Buffer: Dropped to 500KB to aggressively drop frames if client falls behind
-        if (ws.readyState === 1) {
-            if (ws.bufferedAmount < 500000) {
-              ws.send(cachedMetaPayload);
-              ws.send(buffer);
-              sentToAnyone = true;
-            } else {
-               // Drop frame, do not send to prevent queue buildup
-            }
-        }
-      }
-      
-      // 3. The Uncap: 16ms delay targets a blistering 60 FPS output.
-      const delay = sentToAnyone ? 16 : 200; 
-      await new Promise(resolve => setTimeout(resolve, delay)); 
-    } catch (err) {
-      await new Promise(resolve => setTimeout(resolve, 100)); // Retry rather than breaking the loop permanently
-    }
-  }
-  isDumpingFrames = false;
+  captureLoop();
 }
 
 let cachedRects = []; 

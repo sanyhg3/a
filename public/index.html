@@ -36,6 +36,21 @@
 </head>
 <body>
 
+<div id="latency-meter" style="
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  background: rgba(0,0,0,0.6);
+  color: #0f0;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  z-index: 2147483647;
+  display: none;
+">
+  0 ms
+</div>
+
 <div id="viewport">
   <canvas id="screen-canvas"></canvas>
   <div id="input-overlay"></div>
@@ -47,6 +62,7 @@
        enterkeyhint="send" inputmode="text" />
 
 <script>
+const ENABLE_LATENCY_METER = true;
 const $ = (id) => document.getElementById(id);
 const viewport     = $('viewport');
 const canvas       = $('screen-canvas');
@@ -99,6 +115,7 @@ let isDragging   = false;
 let longPressTimeout = null;
 let lastMoveTime = 0;
 
+let lastFrameTimestamp = 0;
 let latestFrameBlob = null;
 let isDrawing = false;
 
@@ -118,6 +135,12 @@ async function drawLatestFrame() {
     
     ctx.transferFromImageBitmap(bitmap);
   } catch (err) {}
+
+  if (ENABLE_LATENCY_METER && lastFrameTimestamp) {
+    const latency = Date.now() - lastFrameTimestamp;
+    document.getElementById('latency-meter').style.display = 'block';
+    document.getElementById('latency-meter').textContent = latency + ' ms';
+  }
 
   isDrawing = false; 
   requestAnimationFrame(drawLatestFrame);
@@ -146,11 +169,16 @@ function connect() {
       lockCanvasDimensions();
   };
 
+
   ws.onmessage = (e) => {
     if (typeof e.data === 'string') {
       try {
-          const msg = JSON.parse(e.data);
-          if (msg.type === 'meta') inputRects = msg.inputRects || [];
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'frame-meta') {
+          lastFrameTimestamp = msg.ts;
+        } else if (msg.type === 'meta') {
+          inputRects = msg.inputRects || [];
+        }
       } catch (err) {}
     } 
     else if (e.data instanceof Blob) {

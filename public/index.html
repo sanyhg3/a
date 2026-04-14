@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>Remote Browser Pro</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root { --bg: #000; --text: #e8e8e8; }
+  html, body {
+    height: 100%; width: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    overflow: hidden; touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  #viewport {
+    position: fixed; inset: 0; overflow: hidden; background: #000;
+  }
+  
+  #screen-canvas {
+    position: absolute; top: 0; left: 0;
+    display: block; user-select: none; pointer-events: none;
+    transform: translateZ(0); 
+  }
+  
+  #input-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 10; }
+  #kbd-trigger {
+    position: fixed; top: -9999px; left: -9999px;
+    width: 1px; height: 1px; opacity: 0; border: none; outline: none; z-index: -1;
+  }
+</style>
+</head>
+<body>
+
+<div id="viewport">
+  <canvas id="screen-canvas"></canvas>
+  <div id="input-overlay"></div>
+</div>
+
+<input id="kbd-trigger" type="text"
+       autocomplete="off" autocorrect="off"
+       autocapitalize="off" spellcheck="false"
+       enterkeyhint="send" inputmode="text" />
+
+<script>
+const $ = (id) => document.getElementById(id);
+const viewport     = $('viewport');
+const canvas       = $('screen-canvas');
+const ctx          = canvas.getContext('bitmaprenderer'); 
+const kbdTrigger   = $('kbd-trigger');
+
+let SERVER_W = window.innerWidth;
+let SERVER_H = window.innerHeight;
+let SERVER_DPR = window.devicePixelRatio || 1;
+
+function lockCanvasDimensions() {
+  canvas.width = Math.round(SERVER_W * SERVER_DPR);
+  canvas.height = Math.round(SERVER_H * SERVER_DPR);
+  
+  canvas.style.width = SERVER_W + 'px';
+  canvas.style.height = SERVER_H + 'px';
+  
+  if (ws && ws.readyState === 1) {
+    send({ 
+      type: 'init', 
+      w: SERVER_W, 
+      h: SERVER_H, 
+      dpr: SERVER_DPR,
+      ua: navigator.userAgent 
+    });
+  }
+}
+
+let resizeTimeout;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(() => {
+    if (Math.abs(window.innerWidth - SERVER_W) > 10) {
+      SERVER_W = window.innerWidth;
+      SERVER_H = window.innerHeight;
+      lockCanvasDimensions();
+    }
+  }, 200);
+});
+
+let ws           = null;
+let inputRects   = [];
+let isTyping     = false;
+
+let touchStartX  = 0; let touchStartY  = 0;
+let lastTouchY   = 0; let lastTouchX   = 0;
+let isScrolling  = false; let velocityY = 0;
+let momentumID   = null; let touchHistory = []; 
+let isDragging   = false;
+let longPressTimeout = null;
+let lastMoveTime = 0;
+
+let latestFrameBlob = null;
+let isDrawing = false;
+
+async function drawLatestFrame() {
+  if (!latestFrameBlob) return;
+  isDrawing = true; 
+  const blobToDraw = latestFrameBlob; 
+  latestFrameBlob = null; 
+
+  try {
+    const bitmap = await createImageBitmap(blobToDraw);
+    
+    if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+    }
+    
+    ctx.transferFromImageBitmap(bitmap);
+  } catch (err) {}
+
+  isDrawing = false; 
+  requestAnimationFrame(drawLatestFrame);
+}
+
+function send(obj) {
+  if (ws && ws.readyState === 1) {
+      try {
+          ws.send(JSON.stringify(obj));
+      } catch (e) {
+          console.error("Failed to send WS message", e);
+      }
+  }
+}
+
+let reconnectTimeout = null;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}`);
+  ws.binaryType = 'blob'; 
+
+  ws.onopen = () => {
+      console.log('Connected to server');
+      clearTimeout(reconnectTimeout);
+      lockCanvasDimensions();
+  };
+
+  ws.onmessage = (e) => {
+    if (typeof e.data === 'string') {
+      try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'meta') inputRects = msg.inputRects || [];
+      } catch (err) {}
+    } 
+    else if (e.data instanceof Blob) {
+      latestFrameBlob = e.data;
+      if (!isDrawing) requestAnimationFrame(drawLatestFrame);
+    }
+  };
+
+  ws.onclose = () => {
+      console.log('Disconnected from server, attempting reconnect...');
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = setTimeout(connect, 1500);
+  };
+  ws.onerror = () => {
+      // ws.onclose will be called
+  };
+}
+
+function toBrowserCoords(clientX, clientY) {
+  return { bx: clientX, by: clientY };
+}
+
+function getHitInput(bx, by) {
+  return inputRects.find((r) => bx >= r.x && bx <= r.x + r.w && by >= r.y && by <= r.y + r.h);
+}
+
+window.history.pushState({ page: 'remote' }, '', window.location.href);
+window.addEventListener('popstate', (e) => {
+  send({ type: 'back' });
+  window.history.pushState({ page: 'remote' }, '', window.location.href);
+});
+
+viewport.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (momentumID) cancelAnimationFrame(momentumID);
+  const t = e.touches[0];
+  touchStartX = t.clientX; touchStartY = t.clientY;
+  lastTouchX = t.clientX; lastTouchY = t.clientY;
+  touchHistory = [{ y: t.clientY, time: Date.now() }];
+  isScrolling = false; velocityY = 0; isDragging = false;
+
+  const { bx, by } = toBrowserCoords(t.clientX, t.clientY);
+
+  // Set up long press detection for dragging
+  longPressTimeout = setTimeout(() => {
+     isDragging = true;
+     send({ type: 'mousedown', x: bx, y: by });
+  }, 500);
+}, { passive: false });
+
+viewport.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const t = e.touches[0];
+  const curX = t.clientX; const curY = t.clientY;
+  const dx = curX - touchStartX; const dy = curY - touchStartY;
+  const deltaY = curY - lastTouchY;
+  
+  if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+      clearTimeout(longPressTimeout);
+  }
+
+  if (isDragging) {
+      const now = Date.now();
+      if (now - lastMoveTime > 30) { // throttle
+         const { bx, by } = toBrowserCoords(curX, curY);
+         send({ type: 'mousemove', x: bx, y: by });
+         lastMoveTime = now;
+      }
+  } else {
+      touchHistory.push({ y: curY, time: Date.now() });
+      if (touchHistory.length > 5) touchHistory.shift();
+
+      if (Math.abs(dy) > 5) {
+        isScrolling = true;
+        send({ type: 'scroll', dy: -deltaY });
+      }
+  }
+  
+  lastTouchX = curX;
+  lastTouchY = curY;
+}, { passive: false });
+
+viewport.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  clearTimeout(longPressTimeout);
+
+  const t = e.changedTouches[0];
+  const { bx, by } = toBrowserCoords(t.clientX, t.clientY);
+
+  if (isDragging) {
+     send({ type: 'mouseup', x: bx, y: by });
+     isDragging = false;
+     return;
+  }
+
+  if (isScrolling) {
+    if (touchHistory.length > 1) {
+      const oldest = touchHistory[0]; const dt = Date.now() - oldest.time;
+      if (dt > 0 && dt < 100) velocityY = (lastTouchY - oldest.y) / dt;
+      else velocityY = 0; 
+    }
+    const momentumLoop = () => {
+      if (Math.abs(velocityY) > 0.05) { 
+        // Smoother scroll: 0.95 vs 0.94
+        velocityY *= 0.95;
+        send({ type: 'scroll', dy: -(velocityY * 16) });
+        momentumID = requestAnimationFrame(momentumLoop);
+      } else velocityY = 0;
+    };
+    momentumLoop(); 
+    return;
+  }
+
+  if (getHitInput(bx, by)) openKeyboard();
+  else if (isTyping) closeKeyboard(); 
+  
+  send({ type: 'tap', x: bx, y: by });
+}, { passive: false });
+
+let previousText = '';
+function openKeyboard() { isTyping = true; kbdTrigger.value = ''; previousText = ''; kbdTrigger.focus(); }
+function closeKeyboard() { isTyping = false; kbdTrigger.blur(); }
+
+kbdTrigger.addEventListener('input', (e) => {
+  const currentText = kbdTrigger.value;
+  let commonLength = 0;
+  const minLen = Math.min(previousText.length, currentText.length);
+  while (commonLength < minLen && previousText[commonLength] === currentText[commonLength]) commonLength++;
+  
+  const backspacesNeeded = previousText.length - commonLength;
+  const textToType = currentText.substring(commonLength);
+  
+  for (let i = 0; i < backspacesNeeded; i++) send({ type: 'key', key: 'Backspace' });
+  if (textToType.length > 0) send({ type: 'type', text: textToType });
+  previousText = currentText;
+});
+
+kbdTrigger.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); send({ type: 'key', key: 'Enter' }); closeKeyboard(); return; }
+  if (e.key === 'Backspace' && kbdTrigger.value === '') send({ type: 'key', key: 'Backspace' });
+});
+
+kbdTrigger.addEventListener('blur', () => { 
+  setTimeout(() => { if (isTyping && document.activeElement !== kbdTrigger) closeKeyboard(); }, 200); 
+});
+
+lockCanvasDimensions();
+connect();
+</script>
+</body>
+</html>

@@ -15,9 +15,6 @@ app.use(express.json());
 const CLIENTS = new Set();
 let currentSpecs = { w: 0, h: 0, dpr: 0, ua: '' };
 
-let isDumpingFrames = false;
-let dumpTimeout = null;
-
 setInterval(async () => {
   if (browser.isPageReady()) {
     cachedRects = await browser.getInputRects();
@@ -60,7 +57,7 @@ async function captureLoop() {
   if (capturing) return;
   capturing = true;
 
-  while (isDumpingFrames && browser.isPageReady() && CLIENTS.size > 0) {
+  while (browser.isPageReady() && CLIENTS.size > 0) {
     const allBackedUp = [...CLIENTS].every(ws => ws.bufferedAmount > 20000);
 
     if (allBackedUp) {
@@ -93,7 +90,7 @@ async function captureLoop() {
       const isActive = Date.now() - lastInputTime < 500;
 
       if (!isActive) {
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 100));
       } else {
         await new Promise(r => setTimeout(r, 0));
       }
@@ -107,22 +104,9 @@ async function triggerRawDump() {
   lastInputTime = Date.now();
   burstFrames = 8;
 
-  if (CLIENTS.size === 0) {
-      isDumpingFrames = false;
-      return;
+  if (CLIENTS.size > 0) {
+    captureLoop();
   }
-
-  if (isDumpingFrames) {
-    clearTimeout(dumpTimeout);
-    dumpTimeout = setTimeout(() => { isDumpingFrames = false; }, 4000);
-    return;
-  }
-  
-  isDumpingFrames = true;
-  clearTimeout(dumpTimeout);
-  dumpTimeout = setTimeout(() => { isDumpingFrames = false; }, 4000);
-
-  captureLoop();
 }
 
 let cachedRects = []; 
@@ -209,9 +193,6 @@ wss.on('connection', async (ws, req) => {
   ws.on('close', () => { 
     CLIENTS.delete(ws); 
     console.log('?? Client disconnected'); 
-    if (CLIENTS.size === 0) {
-        isDumpingFrames = false; // Stop the loop cleanly
-    }
   });
 });
 

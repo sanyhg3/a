@@ -90,7 +90,7 @@ async function captureLoop() {
       burstFrames--;
       await new Promise(r => setTimeout(r, 0));
     } else {
-      const isActive = Date.now() - lastInputTime < 1000;
+      const isActive = Date.now() - lastInputTime < 500;
 
       if (!isActive) {
         await new Promise(r => setTimeout(r, 200));
@@ -187,8 +187,16 @@ wss.on('connection', async (ws, req) => {
           }).catch(()=>{}); 
           break;
         case 'scroll': browser.page.mouse.wheel(0, msg.dy).catch(()=>{}); break;
-        case 'type': browser.page.keyboard.type(msg.text, { delay: 0 }).catch(()=>{}); break;
-        case 'key': browser.page.keyboard.press(msg.key).catch(()=>{}); break;
+        case 'type':
+          await browser.page.keyboard.type(msg.text, { delay: 0 }).catch(()=>{});
+          burstFrames = 12;
+          lastInputTime = Date.now();
+          break;
+        case 'key':
+          await browser.page.keyboard.press(msg.key).catch(()=>{});
+          burstFrames = 12;
+          lastInputTime = Date.now();
+          break;
         case 'mousedown': browser.page.mouse.move(msg.x, msg.y).then(() => browser.page.mouse.down({ button: 'left' })).catch(()=>{}); break;
         case 'mousemove': browser.page.mouse.move(msg.x, msg.y, { steps: 2 }).catch(()=>{}); break;
         case 'mouseup': browser.page.mouse.up({ button: 'left' }).catch(()=>{}); break;

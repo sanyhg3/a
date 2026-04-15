@@ -33,6 +33,9 @@ let lastInputTime = 0;
 
 let inFlight = 0;
 const MAX_IN_FLIGHT = 2;
+let burstFrames = 0;
+let latestCaptureId = 0;
+let latestSentCaptureId = 0;
 
 function broadcastFrame(buffer) {
   const hash = crypto.createHash('md5').update(buffer).digest('hex');
@@ -42,18 +45,19 @@ function broadcastFrame(buffer) {
 
   let sentToAnyone = false;
   for (const ws of CLIENTS) {
-    if (ws.readyState === 1 && ws.bufferedAmount <= 100000) {
-      ws.send(cachedMetaPayload);
+    if (ws.readyState !== 1) continue;
+    if (ws.bufferedAmount > 50000) continue;
 
-      const now = Date.now();
-      ws.send(JSON.stringify({
-        type: 'frame-meta',
-        ts: now
-      }));
+    ws.send(cachedMetaPayload);
 
-      ws.send(buffer);
-      sentToAnyone = true;
-    }
+    const now = Date.now();
+    ws.send(JSON.stringify({
+      type: 'frame-meta',
+      ts: now
+    }));
+
+    ws.send(buffer);
+    sentToAnyone = true;
   }
   return sentToAnyone;
 }
@@ -63,14 +67,24 @@ async function captureLoop() {
   capturing = true;
 
   while (isDumpingFrames && browser.isPageReady() && CLIENTS.size > 0) {
+    const allBackedUp = [...CLIENTS].every(ws => ws.bufferedAmount > 50000);
+
+    if (allBackedUp) {
+      await new Promise(r => setTimeout(r, 16));
+      continue;
+    }
+
     if (inFlight < MAX_IN_FLIGHT) {
       inFlight++;
+      const captureId = ++latestCaptureId;
 
       browser.page.screenshot({
         type: 'jpeg',
         quality: 50,
         optimizeForSpeed: true
       }).then(buffer => {
+        if (captureId < latestSentCaptureId) return;
+        latestSentCaptureId = Math.max(latestSentCaptureId, captureId);
         broadcastFrame(buffer);
       }).catch(() => {})
       .finally(() => {
@@ -78,8 +92,18 @@ async function captureLoop() {
       });
     }
 
-    // Yield control / adaptive delay replacement
-    await new Promise(r => setTimeout(r, 0));
+    if (burstFrames > 0) {
+      burstFrames--;
+      await new Promise(r => setTimeout(r, 0));
+    } else {
+      const isActive = Date.now() - lastInputTime < 1000;
+
+      if (!isActive) {
+        await new Promise(r => setTimeout(r, 200));
+      } else {
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
   }
 
   capturing = false;
@@ -87,6 +111,7 @@ async function captureLoop() {
 
 async function triggerRawDump() {
   lastInputTime = Date.now();
+  burstFrames = 8;
 
   if (CLIENTS.size === 0) {
       isDumpingFrames = false;

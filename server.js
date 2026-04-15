@@ -31,6 +31,9 @@ let lastFrameHash = null;
 let capturing = false;
 let lastInputTime = 0;
 
+let inFlight = 0;
+const MAX_IN_FLIGHT = 2;
+
 function broadcastFrame(buffer) {
   const hash = crypto.createHash('md5').update(buffer).digest('hex');
 
@@ -60,28 +63,23 @@ async function captureLoop() {
   capturing = true;
 
   while (isDumpingFrames && browser.isPageReady() && CLIENTS.size > 0) {
-    let delay = 200;
-    try {
-      const screenshotPromise = browser.page.screenshot({
+    if (inFlight < MAX_IN_FLIGHT) {
+      inFlight++;
+
+      browser.page.screenshot({
         type: 'jpeg',
-        quality: 40,
+        quality: 50,
         optimizeForSpeed: true
+      }).then(buffer => {
+        broadcastFrame(buffer);
+      }).catch(() => {})
+      .finally(() => {
+        inFlight--;
       });
-
-      // Do NOT await immediately → overlap work
-      const buffer = await screenshotPromise;
-
-      broadcastFrame(buffer);
-
-      // Adaptive timing: polling fast if recently interacted
-      if (Date.now() - lastInputTime <= 1000) {
-        delay = 16;
-      }
-    } catch (e) {
-      delay = 100;
     }
 
-    await new Promise(r => setTimeout(r, delay));
+    // Yield control / adaptive delay replacement
+    await new Promise(r => setTimeout(r, 0));
   }
 
   capturing = false;

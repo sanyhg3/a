@@ -128,7 +128,9 @@ function sendPing() {
 setInterval(sendPing, 1000);
 
 async function drawLatestFrame() {
+  if (isDrawing) return;
   if (!latestFrameBlob) return;
+
   isDrawing = true; 
   const blobToDraw = latestFrameBlob; 
   latestFrameBlob = null; 

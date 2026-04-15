@@ -32,7 +32,7 @@ let capturing = false;
 let lastInputTime = 0;
 
 let inFlight = 0;
-const MAX_IN_FLIGHT = 2;
+const MAX_IN_FLIGHT = 3;
 let burstFrames = 0;
 let latestCaptureId = 0;
 let latestSentCaptureId = 0;
@@ -46,7 +46,7 @@ function broadcastFrame(buffer) {
   let sentToAnyone = false;
   for (const ws of CLIENTS) {
     if (ws.readyState !== 1) continue;
-    if (ws.bufferedAmount > 50000) continue;
+    if (ws.bufferedAmount > 20000) continue;
 
     ws.send(cachedMetaPayload);
 
@@ -61,7 +61,7 @@ async function captureLoop() {
   capturing = true;
 
   while (isDumpingFrames && browser.isPageReady() && CLIENTS.size > 0) {
-    const allBackedUp = [...CLIENTS].every(ws => ws.bufferedAmount > 50000);
+    const allBackedUp = [...CLIENTS].every(ws => ws.bufferedAmount > 20000);
 
     if (allBackedUp) {
       await new Promise(r => setTimeout(r, 16));
@@ -74,7 +74,7 @@ async function captureLoop() {
 
       browser.page.screenshot({
         type: 'jpeg',
-        quality: 50,
+        quality: 35,
         optimizeForSpeed: true
       }).then(buffer => {
         if (captureId < latestSentCaptureId) return;
@@ -180,7 +180,7 @@ wss.on('connection', async (ws, req) => {
               browser.page.evaluate(() => {
                 const el = document.activeElement;
                 if (el && (['INPUT', 'TEXTAREA'].includes(el.tagName) || el.isContentEditable)) {
-                  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  el.scrollIntoView({ block: 'center' });
                 }
               }).catch(() => {}); 
             }, 300);

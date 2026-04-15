@@ -71,7 +71,7 @@ const kbdTrigger   = $('kbd-trigger');
 
 let SERVER_W = window.innerWidth;
 let SERVER_H = window.innerHeight;
-let SERVER_DPR = window.devicePixelRatio || 1;
+let SERVER_DPR = Math.min(window.devicePixelRatio || 1, 1.5);
 
 function lockCanvasDimensions() {
   canvas.width = Math.round(SERVER_W * SERVER_DPR);

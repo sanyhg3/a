@@ -53,7 +53,11 @@ class BrowserController {
             '--disable-accelerated-video-decode',
             '--autoplay-policy=no-user-gesture-required',
 
-            '--disable-gpu',
+            '--disable-background-timer-throttling',
+            '--disable-renderer-backgrounding',
+            '--disable-backgrounding-occluded-windows',
+            '--enable-gpu',
+
             '--disable-software-rasterizer',
             '--disable-lcd-text',
             '--enable-font-antialiasing'
@@ -70,8 +74,17 @@ class BrowserController {
               body, p, span, div, input, button, textarea {
                 font-family: Roboto, -apple-system, sans-serif;
               }
+              * {
+                animation: none !important;
+                transition: none !important;
+              }
             `;
             document.head.appendChild(style);
+
+            // Prevent render throttling
+            setInterval(() => {
+              document.body.style.transform = `translateZ(${Math.random()}px)`;
+            }, 100);
           });
         });
 

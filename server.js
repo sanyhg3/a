@@ -3,8 +3,6 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const browser = require('./browser');
-const crypto = require('crypto');
-
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -22,8 +20,6 @@ setInterval(async () => {
   }
 }, 1000);
 
-let lastFrameHash = null;
-
 // --- THE SMOOTHNESS ENGINE ---
 let capturing = false;
 let lastInputTime = 0;
@@ -35,11 +31,6 @@ let latestCaptureId = 0;
 let latestSentCaptureId = 0;
 
 function broadcastFrame(buffer) {
-  const hash = crypto.createHash('md5').update(buffer).digest('hex');
-
-  if (hash === lastFrameHash) return false;
-  lastFrameHash = hash;
-
   let sentToAnyone = false;
   for (const ws of CLIENTS) {
     if (ws.readyState !== 1) continue;
@@ -72,7 +63,8 @@ async function captureLoop() {
       browser.page.screenshot({
         type: 'jpeg',
         quality: 35,
-        optimizeForSpeed: true
+        optimizeForSpeed: true,
+        captureBeyondViewport: false
       }).then(buffer => {
         if (captureId < latestSentCaptureId) return;
         latestSentCaptureId = Math.max(latestSentCaptureId, captureId);
@@ -101,8 +93,10 @@ async function captureLoop() {
 }
 
 async function triggerRawDump() {
+  inFlight = 0;
+  latestCaptureId++;
+  burstFrames = 25;
   lastInputTime = Date.now();
-  burstFrames = 20;
 
   if (CLIENTS.size > 0) {
     captureLoop();

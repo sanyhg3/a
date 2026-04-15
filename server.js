@@ -43,11 +43,11 @@ function broadcastFrame(buffer) {
   let sentToAnyone = false;
   for (const ws of CLIENTS) {
     if (ws.readyState !== 1) continue;
-    if (ws.bufferedAmount > 20000) continue;
+    if (ws.bufferedAmount > 10000) continue;
 
     ws.send(cachedMetaPayload);
 
-    ws.send(buffer);
+    ws.send(buffer, { binary: true });
     sentToAnyone = true;
   }
   return sentToAnyone;
@@ -58,7 +58,7 @@ async function captureLoop() {
   capturing = true;
 
   while (browser.isPageReady() && CLIENTS.size > 0) {
-    const allBackedUp = [...CLIENTS].every(ws => ws.bufferedAmount > 20000);
+    const allBackedUp = [...CLIENTS].every(ws => ws.bufferedAmount > 10000);
 
     if (allBackedUp) {
       await new Promise(r => setTimeout(r, 16));
@@ -85,14 +85,14 @@ async function captureLoop() {
 
     if (burstFrames > 0) {
       burstFrames--;
-      await new Promise(r => setTimeout(r, 0));
+      await new Promise(r => setImmediate(r));
     } else {
       const isActive = Date.now() - lastInputTime < 500;
 
       if (!isActive) {
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, 80));
       } else {
-        await new Promise(r => setTimeout(r, 0));
+        await new Promise(r => setImmediate(r));
       }
     }
   }
@@ -102,7 +102,7 @@ async function captureLoop() {
 
 async function triggerRawDump() {
   lastInputTime = Date.now();
-  burstFrames = 8;
+  burstFrames = 20;
 
   if (CLIENTS.size > 0) {
     captureLoop();
@@ -173,12 +173,12 @@ wss.on('connection', async (ws, req) => {
         case 'scroll': browser.page.mouse.wheel(0, msg.dy).catch(()=>{}); break;
         case 'type':
           await browser.page.keyboard.type(msg.text, { delay: 0 }).catch(()=>{});
-          burstFrames = 12;
+          burstFrames = 20;
           lastInputTime = Date.now();
           break;
         case 'key':
           await browser.page.keyboard.press(msg.key).catch(()=>{});
-          burstFrames = 12;
+          burstFrames = 20;
           lastInputTime = Date.now();
           break;
         case 'mousedown': browser.page.mouse.move(msg.x, msg.y).then(() => browser.page.mouse.down({ button: 'left' })).catch(()=>{}); break;

@@ -21,87 +21,7 @@ setInterval(async () => {
 }, 1000);
 
 // --- THE SMOOTHNESS ENGINE ---
-let capturing = false;
-let lastInputTime = 0;
 
-let inFlight = 0;
-const MAX_IN_FLIGHT = 3;
-let burstFrames = 0;
-let latestCaptureId = 0;
-let latestSentCaptureId = 0;
-
-function broadcastFrame(buffer) {
-  let sentToAnyone = false;
-  for (const ws of CLIENTS) {
-    if (ws.readyState !== 1) continue;
-    if (ws.bufferedAmount > 10000) continue;
-
-    ws.send(cachedMetaPayload);
-
-    ws.send(buffer, { binary: true });
-    sentToAnyone = true;
-  }
-  return sentToAnyone;
-}
-
-async function captureLoop() {
-  if (capturing) return;
-  capturing = true;
-
-  while (browser.isPageReady() && CLIENTS.size > 0) {
-    const allBackedUp = [...CLIENTS].every(ws => ws.bufferedAmount > 10000);
-
-    if (allBackedUp) {
-      await new Promise(r => setTimeout(r, 16));
-      continue;
-    }
-
-    if (inFlight < MAX_IN_FLIGHT) {
-      inFlight++;
-      const captureId = ++latestCaptureId;
-
-      browser.page.screenshot({
-        type: 'jpeg',
-        quality: 35,
-        optimizeForSpeed: true,
-        captureBeyondViewport: false
-      }).then(buffer => {
-        if (captureId < latestSentCaptureId) return;
-        latestSentCaptureId = Math.max(latestSentCaptureId, captureId);
-        broadcastFrame(buffer);
-      }).catch(() => {})
-      .finally(() => {
-        inFlight--;
-      });
-    }
-
-    if (burstFrames > 0) {
-      burstFrames--;
-      await new Promise(r => setImmediate(r));
-    } else {
-      const isActive = Date.now() - lastInputTime < 500;
-
-      if (!isActive) {
-        await new Promise(r => setTimeout(r, 80));
-      } else {
-        await new Promise(r => setImmediate(r));
-      }
-    }
-  }
-
-  capturing = false;
-}
-
-async function triggerRawDump() {
-  inFlight = 0;
-  latestCaptureId++;
-  burstFrames = 25;
-  lastInputTime = Date.now();
-
-  if (CLIENTS.size > 0) {
-    captureLoop();
-  }
-}
 
 let cachedRects = []; 
 let cachedMetaPayload = JSON.stringify({ type: 'meta', url: '', inputRects: [] });
@@ -135,17 +55,38 @@ wss.on('connection', async (ws, req) => {
         return;
       }
 
-      if (['tap', 'scroll', 'type', 'key', 'navigate', 'back', 'forward', 'mousedown', 'mousemove', 'mouseup'].includes(msg.type)) {
-        triggerRawDump();
-      }
-
       switch (msg.type) {
         case 'init':
           if (!browser.isPageReady() || currentSpecs.w !== msg.w || currentSpecs.h !== msg.h || currentSpecs.dpr !== msg.dpr) {
             currentSpecs = { w: msg.w, h: msg.h, dpr: msg.dpr, ua: msg.ua };
-            await browser.startNativeBrowser(msg.w, msg.h, msg.dpr, msg.ua, triggerRawDump);
+            await browser.startNativeBrowser(msg.w, msg.h, msg.dpr, msg.ua);
           }
-          triggerRawDump();
+
+          if (browser.activeCDP) {
+            const client = browser.activeCDP;
+            // Ensure we don't bind multiple listeners if multiple clients connect
+            client.removeAllListeners('Page.screencastFrame');
+            client.on('Page.screencastFrame', async ({ data, sessionId }) => {
+              try {
+                const buffer = Buffer.from(data, 'base64');
+                for (const ws of CLIENTS) {
+                  if (ws.readyState === 1 && ws.bufferedAmount < 20000) {
+                    ws.send(cachedMetaPayload);
+                    ws.send(buffer, { binary: true });
+                  }
+                }
+                await client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+              } catch (e) {}
+            });
+
+            await client.send('Page.startScreencast', {
+              format: 'jpeg',
+              quality: 60,
+              maxWidth: Math.round(currentSpecs.w * Math.min(currentSpecs.dpr, 2)),
+              maxHeight: Math.round(currentSpecs.h * Math.min(currentSpecs.dpr, 2)),
+              everyNthFrame: 1
+            }).catch(e => console.error('Screencast Start Error:', e));
+          }
           break;
         case 'navigate': browser.page.goto(msg.url, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(()=>{}); break;
         case 'back': browser.page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {}); break;
@@ -167,13 +108,9 @@ wss.on('connection', async (ws, req) => {
         case 'scroll': browser.page.mouse.wheel(0, msg.dy).catch(()=>{}); break;
         case 'type':
           await browser.page.keyboard.type(msg.text, { delay: 0 }).catch(()=>{});
-          burstFrames = 20;
-          lastInputTime = Date.now();
           break;
         case 'key':
           await browser.page.keyboard.press(msg.key).catch(()=>{});
-          burstFrames = 20;
-          lastInputTime = Date.now();
           break;
         case 'mousedown': browser.page.mouse.move(msg.x, msg.y).then(() => browser.page.mouse.down({ button: 'left' })).catch(()=>{}); break;
         case 'mousemove': browser.page.mouse.move(msg.x, msg.y, { steps: 2 }).catch(()=>{}); break;
@@ -184,9 +121,12 @@ wss.on('connection', async (ws, req) => {
     }
   });
 
-  ws.on('close', () => { 
+  ws.on('close', async () => {
     CLIENTS.delete(ws); 
     console.log('?? Client disconnected'); 
+    if (CLIENTS.size === 0 && browser.activeCDP) {
+      await browser.activeCDP.send('Page.stopScreencast').catch(() => {});
+    }
   });
 });
 

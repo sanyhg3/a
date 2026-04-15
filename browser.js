@@ -79,7 +79,9 @@ class BrowserController {
                 transition: none !important;
               }
             `;
-            document.head.appendChild(style);
+            if (document.head) {
+              document.head.appendChild(style);
+            }
 
             // Prevent render throttling
             setInterval(() => {
@@ -92,11 +94,12 @@ class BrowserController {
         this.page = pages.length > 0 ? pages[0] : await this.context.newPage();
 
         try {
+          await this.page.setViewportSize({ width: Math.round(w), height: Math.round(h) });
           this.activeCDP = await this.page.context().newCDPSession(this.page);
           await this.activeCDP.send('Emulation.setDeviceMetricsOverride', {
             width: Math.round(w),
             height: Math.round(h),
-            deviceScaleFactor: dpr,
+            deviceScaleFactor: Math.min(dpr, 2),
             mobile: true,
             screenWidth: Math.round(w),
             screenHeight: Math.round(h)

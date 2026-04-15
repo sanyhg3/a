@@ -50,12 +50,6 @@ function broadcastFrame(buffer) {
 
     ws.send(cachedMetaPayload);
 
-    const now = Date.now();
-    ws.send(JSON.stringify({
-      type: 'frame-meta',
-      ts: now
-    }));
-
     ws.send(buffer);
     sentToAnyone = true;
   }
@@ -155,6 +149,14 @@ wss.on('connection', async (ws, req) => {
     try { msg = JSON.parse(raw); } catch { return; }
 
     try {
+      if (msg.type === 'ping') {
+        ws.send(JSON.stringify({
+          type: 'pong',
+          ts: msg.ts
+        }));
+        return;
+      }
+
       if (['tap', 'scroll', 'type', 'key', 'navigate', 'back', 'forward', 'mousedown', 'mousemove', 'mouseup'].includes(msg.type)) {
         triggerRawDump();
       }

@@ -115,9 +115,17 @@ let isDragging   = false;
 let longPressTimeout = null;
 let lastMoveTime = 0;
 
-let lastFrameTimestamp = 0;
 let latestFrameBlob = null;
 let isDrawing = false;
+
+let lastPingTime = 0;
+
+function sendPing() {
+  lastPingTime = Date.now();
+  send({ type: 'ping', ts: lastPingTime });
+}
+
+setInterval(sendPing, 1000);
 
 async function drawLatestFrame() {
   if (!latestFrameBlob) return;
@@ -134,13 +142,6 @@ async function drawLatestFrame() {
     }
     
     ctx.transferFromImageBitmap(bitmap);
-
-    if (ENABLE_LATENCY_METER && lastFrameTimestamp) {
-      const latency = Date.now() - lastFrameTimestamp;
-      document.getElementById('latency-meter').style.display = 'block';
-      document.getElementById('latency-meter').textContent = latency + ' ms';
-      lastFrameTimestamp = 0; // Prevent stopwatch bug
-    }
   } catch (err) {}
 
   isDrawing = false; 
@@ -175,8 +176,13 @@ function connect() {
     if (typeof e.data === 'string') {
       try {
         const msg = JSON.parse(e.data);
-        if (msg.type === 'frame-meta') {
-          lastFrameTimestamp = msg.ts;
+        if (msg.type === 'pong') {
+          const rtt = Date.now() - msg.ts;
+          if (ENABLE_LATENCY_METER) {
+            const el = document.getElementById('latency-meter');
+            el.style.display = 'block';
+            el.textContent = 'RTT: ' + rtt + ' ms';
+          }
         } else if (msg.type === 'meta') {
           inputRects = msg.inputRects || [];
         }

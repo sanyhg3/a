@@ -130,55 +130,72 @@ wss.on('connection', async (ws, req) => {
         case 'scroll': browser.page.mouse.wheel(0, msg.dy).catch(()=>{}); break;
         case 'edit':
           if (browser.activeCDP) {
-            // 1. BACKSPACE FIRST
-            for (let i = 0; i < (msg.backspace || 0); i++) {
-              await browser.activeCDP.send('Input.dispatchKeyEvent', {
-                type: 'keyDown',
-                key: 'Backspace',
-                code: 'Backspace',
-                windowsVirtualKeyCode: 8
-              }).catch(()=>{});
+            const promises = [];
 
-              await browser.activeCDP.send('Input.dispatchKeyEvent', {
-                type: 'keyUp',
-                key: 'Backspace',
-                code: 'Backspace',
-                windowsVirtualKeyCode: 8
-              }).catch(()=>{});
+            // 1. BACKSPACE (QUEUE ALL)
+            for (let i = 0; i < (msg.backspace || 0); i++) {
+              promises.push(
+                browser.activeCDP.send('Input.dispatchKeyEvent', {
+                  type: 'keyDown',
+                  key: 'Backspace',
+                  code: 'Backspace',
+                  windowsVirtualKeyCode: 8
+                }).catch(()=>{})
+              );
+
+              promises.push(
+                browser.activeCDP.send('Input.dispatchKeyEvent', {
+                  type: 'keyUp',
+                  key: 'Backspace',
+                  code: 'Backspace',
+                  windowsVirtualKeyCode: 8
+                }).catch(()=>{})
+              );
             }
 
-            // 2. TYPE TEXT USING CHAR EVENTS (CRITICAL)
+            // 2. TYPE TEXT (QUEUE ALL)
             if (msg.text && msg.text.length > 0) {
               for (const ch of msg.text) {
-                await browser.activeCDP.send('Input.dispatchKeyEvent', {
-                  type: 'char',
-                  text: ch
-                }).catch(()=>{});
+                promises.push(
+                  browser.activeCDP.send('Input.dispatchKeyEvent', {
+                    type: 'char',
+                    text: ch
+                  }).catch(()=>{})
+                );
               }
             }
+
+            // 3. EXECUTE IN PARALLEL
+            Promise.all(promises).catch(()=>{});
           }
           break;
         case 'type':
           if (browser.activeCDP && msg.text && msg.text.length > 0) {
+            const typePromises = [];
             for (const ch of msg.text) {
-              await browser.activeCDP.send('Input.dispatchKeyEvent', {
-                type: 'char',
-                text: ch
-              }).catch(()=>{});
+              typePromises.push(
+                browser.activeCDP.send('Input.dispatchKeyEvent', {
+                  type: 'char',
+                  text: ch
+                }).catch(()=>{})
+              );
             }
+            Promise.all(typePromises).catch(()=>{});
           }
           break;
         case 'key':
           if (browser.activeCDP) {
-            await browser.activeCDP.send('Input.dispatchKeyEvent', {
-              type: 'keyDown',
-              key: msg.key
-            }).catch(() => {});
-
-            await browser.activeCDP.send('Input.dispatchKeyEvent', {
-              type: 'keyUp',
-              key: msg.key
-            }).catch(() => {});
+            const keyPromises = [
+              browser.activeCDP.send('Input.dispatchKeyEvent', {
+                type: 'keyDown',
+                key: msg.key
+              }).catch(() => {}),
+              browser.activeCDP.send('Input.dispatchKeyEvent', {
+                type: 'keyUp',
+                key: msg.key
+              }).catch(() => {})
+            ];
+            Promise.all(keyPromises).catch(()=>{});
           }
           break;
         case 'mousedown': browser.page.mouse.move(msg.x, msg.y).then(() => browser.page.mouse.down({ button: 'left' })).catch(()=>{}); break;

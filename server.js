@@ -12,6 +12,7 @@ app.use(express.json());
 
 const CLIENTS = new Set();
 let currentSpecs = { w: 0, h: 0, dpr: 0, ua: '' };
+let screencastStarted = false;
 
 setInterval(async () => {
   if (browser.isPageReady()) {
@@ -21,8 +22,31 @@ setInterval(async () => {
 }, 1000);
 
 // --- THE SMOOTHNESS ENGINE ---
-let forceNextFrame = false;
-let lastSentTime = 0;
+let lastFrameTime = 0;
+
+function handleFrame(data, sessionId) {
+  if (!browser.activeCDP) return;
+  const now = Date.now();
+
+  // limit to 10 FPS
+  if (now - lastFrameTime < 100) {
+    browser.activeCDP.send('Page.screencastFrameAck', { sessionId }).catch(()=>{});
+    return;
+  }
+
+  lastFrameTime = now;
+
+  const buffer = Buffer.from(data, 'base64');
+
+  for (const ws of CLIENTS) {
+    if (ws.readyState === 1 && ws.bufferedAmount < 50000) {
+      ws.send(cachedMetaPayload);
+      ws.send(buffer, { binary: true });
+    }
+  }
+
+  browser.activeCDP.send('Page.screencastFrameAck', { sessionId }).catch(()=>{});
+}
 
 let cachedRects = []; 
 let cachedMetaPayload = JSON.stringify({ type: 'meta', url: '', inputRects: [] });
@@ -56,10 +80,6 @@ wss.on('connection', async (ws, req) => {
         return;
       }
 
-      if (['tap','scroll','type','key','navigate','back','forward'].includes(msg.type)) {
-        forceNextFrame = true;
-      }
-
       switch (msg.type) {
         case 'init':
           if (!browser.isPageReady() || currentSpecs.w !== msg.w || currentSpecs.h !== msg.h || currentSpecs.dpr !== msg.dpr) {
@@ -67,31 +87,16 @@ wss.on('connection', async (ws, req) => {
             await browser.startNativeBrowser(msg.w, msg.h, msg.dpr, msg.ua);
           }
 
-          if (browser.activeCDP) {
+          if (browser.activeCDP && !screencastStarted) {
+            screencastStarted = true;
             const client = browser.activeCDP;
-            // Ensure we don't bind multiple listeners if multiple clients connect
-            client.removeAllListeners('Page.screencastFrame');
-            client.on('Page.screencastFrame', async ({ data, sessionId }) => {
-              try {
-                const now = Date.now();
-                if (!forceNextFrame && now - lastSentTime < 40) {
-                  client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
-                  return;
-                }
 
-                lastSentTime = now;
-                forceNextFrame = false;
-
-                const buffer = Buffer.from(data, 'base64');
-                for (const ws of CLIENTS) {
-                  if (ws.readyState === 1 && ws.bufferedAmount < 75000) {
-                    ws.send(cachedMetaPayload);
-                    ws.send(buffer, { binary: true });
-                  }
-                }
-                client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
-              } catch (e) {}
-            });
+            if (!browser.screencastListenerAttached) {
+              browser.screencastListenerAttached = true;
+              client.on('Page.screencastFrame', ({ data, sessionId }) => {
+                handleFrame(data, sessionId);
+              });
+            }
 
             await client.send('Page.startScreencast', {
               format: 'jpeg',
@@ -99,7 +104,7 @@ wss.on('connection', async (ws, req) => {
               maxWidth: Math.round(currentSpecs.w),
               maxHeight: Math.round(currentSpecs.h),
               everyNthFrame: 1
-            }).catch(e => console.error('Screencast Start Error:', e));
+            }).catch(()=>{});
           }
           break;
         case 'navigate': browser.page.goto(msg.url, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(()=>{}); break;
@@ -120,6 +125,35 @@ wss.on('connection', async (ws, req) => {
           }).catch(()=>{}); 
           break;
         case 'scroll': browser.page.mouse.wheel(0, msg.dy).catch(()=>{}); break;
+        case 'edit':
+          if (browser.activeCDP) {
+            // BACKSPACE FIRST
+            for (let i = 0; i < (msg.backspace || 0); i++) {
+              await browser.activeCDP.send('Input.dispatchKeyEvent', {
+                type: 'keyDown',
+                key: 'Backspace',
+                code: 'Backspace',
+                windowsVirtualKeyCode: 8,
+                nativeVirtualKeyCode: 8
+              }).catch(()=>{});
+
+              await browser.activeCDP.send('Input.dispatchKeyEvent', {
+                type: 'keyUp',
+                key: 'Backspace',
+                code: 'Backspace',
+                windowsVirtualKeyCode: 8,
+                nativeVirtualKeyCode: 8
+              }).catch(()=>{});
+            }
+
+            // INSERT TEXT
+            if (msg.text && msg.text.length > 0) {
+              await browser.activeCDP.send('Input.insertText', {
+                text: msg.text
+              }).catch(()=>{});
+            }
+          }
+          break;
         case 'type':
           if (browser.activeCDP) {
             await browser.activeCDP.send('Input.insertText', {
@@ -152,9 +186,6 @@ wss.on('connection', async (ws, req) => {
   ws.on('close', async () => {
     CLIENTS.delete(ws); 
     console.log('?? Client disconnected'); 
-    if (CLIENTS.size === 0 && browser.activeCDP) {
-      await browser.activeCDP.send('Page.stopScreencast').catch(() => {});
-    }
   });
 });
 

@@ -86,10 +86,6 @@ class BrowserController {
               document.head.appendChild(style);
             }
 
-            // Prevent render throttling
-            setInterval(() => {
-              document.body.style.transform = `translateZ(${Math.random()}px)`;
-            }, 100);
           });
         });
 
@@ -119,6 +115,12 @@ class BrowserController {
 
         await this.page.goto('https://m.facebook.com', { waitUntil: 'domcontentloaded' }).catch(e => console.error('Navigation error:', e));
         console.log('?? Native Browser Ready ?? m.facebook.com');
+
+        await this.page.evaluate(() => {
+          setInterval(() => {
+            document.body.style.transform = 'translateZ(0)';
+          }, 2000);
+        });
 
         this.page.on('framenavigated', async (frame) => {
           if (frame === this.page.mainFrame()) {

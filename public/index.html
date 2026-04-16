@@ -315,8 +315,7 @@ kbdTrigger.addEventListener('input', (e) => {
   const backspacesNeeded = previousText.length - commonLength;
   const textToType = currentText.substring(commonLength);
   
-  for (let i = 0; i < backspacesNeeded; i++) send({ type: 'key', key: 'Backspace' });
-  if (textToType.length > 0) send({ type: 'type', text: textToType });
+  send({ type: 'edit', backspace: backspacesNeeded, text: textToType });
   previousText = currentText;
 });
 

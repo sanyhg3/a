@@ -56,9 +56,12 @@ class BrowserController {
             '--disable-background-timer-throttling',
             '--disable-renderer-backgrounding',
             '--disable-backgrounding-occluded-windows',
-            '--enable-gpu',
 
-            '--disable-software-rasterizer',
+            '--disable-gpu',
+            '--disable-accelerated-2d-canvas',
+            '--disable-accelerated-video-encode',
+            '--disable-gpu-compositing',
+
             '--disable-lcd-text',
             '--enable-font-antialiasing'
           ],
@@ -99,7 +102,7 @@ class BrowserController {
           await this.activeCDP.send('Emulation.setDeviceMetricsOverride', {
             width: Math.round(w),
             height: Math.round(h),
-            deviceScaleFactor: Math.min(dpr, 2),
+            deviceScaleFactor: Math.min(dpr, 1.5),
             mobile: true,
             screenWidth: Math.round(w),
             screenHeight: Math.round(h)

@@ -75,15 +75,15 @@ wss.on('connection', async (ws, req) => {
                     ws.send(buffer, { binary: true });
                   }
                 }
-                await client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+                client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
               } catch (e) {}
             });
 
             await client.send('Page.startScreencast', {
               format: 'jpeg',
-              quality: 60,
-              maxWidth: Math.round(currentSpecs.w * Math.min(currentSpecs.dpr, 2)),
-              maxHeight: Math.round(currentSpecs.h * Math.min(currentSpecs.dpr, 2)),
+              quality: 45,
+              maxWidth: Math.round(currentSpecs.w),
+              maxHeight: Math.round(currentSpecs.h),
               everyNthFrame: 1
             }).catch(e => console.error('Screencast Start Error:', e));
           }
@@ -107,10 +107,24 @@ wss.on('connection', async (ws, req) => {
           break;
         case 'scroll': browser.page.mouse.wheel(0, msg.dy).catch(()=>{}); break;
         case 'type':
-          await browser.page.keyboard.type(msg.text, { delay: 0 }).catch(()=>{});
+          if (browser.activeCDP) {
+            await browser.activeCDP.send('Input.insertText', {
+              text: msg.text
+            }).catch(() => {});
+          }
           break;
         case 'key':
-          await browser.page.keyboard.press(msg.key).catch(()=>{});
+          if (browser.activeCDP) {
+            await browser.activeCDP.send('Input.dispatchKeyEvent', {
+              type: 'keyDown',
+              key: msg.key
+            }).catch(() => {});
+
+            await browser.activeCDP.send('Input.dispatchKeyEvent', {
+              type: 'keyUp',
+              key: msg.key
+            }).catch(() => {});
+          }
           break;
         case 'mousedown': browser.page.mouse.move(msg.x, msg.y).then(() => browser.page.mouse.down({ button: 'left' })).catch(()=>{}); break;
         case 'mousemove': browser.page.mouse.move(msg.x, msg.y, { steps: 2 }).catch(()=>{}); break;

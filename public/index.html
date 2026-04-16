@@ -137,17 +137,12 @@ async function drawLatestFrame() {
 
   try {
     const bitmap = await createImageBitmap(blobToDraw);
-    
-    if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-    }
-    
     ctx.transferFromImageBitmap(bitmap);
-  } catch (err) {}
-
-  isDrawing = false; 
-  requestAnimationFrame(drawLatestFrame);
+  } catch (err) {
+  } finally {
+    isDrawing = false;
+    requestAnimationFrame(drawLatestFrame);
+  }
 }
 
 function send(obj) {

@@ -21,7 +21,8 @@ setInterval(async () => {
 }, 1000);
 
 // --- THE SMOOTHNESS ENGINE ---
-
+let forceNextFrame = false;
+let lastSentTime = 0;
 
 let cachedRects = []; 
 let cachedMetaPayload = JSON.stringify({ type: 'meta', url: '', inputRects: [] });
@@ -55,6 +56,10 @@ wss.on('connection', async (ws, req) => {
         return;
       }
 
+      if (['tap','scroll','type','key','navigate','back','forward'].includes(msg.type)) {
+        forceNextFrame = true;
+      }
+
       switch (msg.type) {
         case 'init':
           if (!browser.isPageReady() || currentSpecs.w !== msg.w || currentSpecs.h !== msg.h || currentSpecs.dpr !== msg.dpr) {
@@ -68,9 +73,18 @@ wss.on('connection', async (ws, req) => {
             client.removeAllListeners('Page.screencastFrame');
             client.on('Page.screencastFrame', async ({ data, sessionId }) => {
               try {
+                const now = Date.now();
+                if (!forceNextFrame && now - lastSentTime < 40) {
+                  client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+                  return;
+                }
+
+                lastSentTime = now;
+                forceNextFrame = false;
+
                 const buffer = Buffer.from(data, 'base64');
                 for (const ws of CLIENTS) {
-                  if (ws.readyState === 1 && ws.bufferedAmount < 20000) {
+                  if (ws.readyState === 1 && ws.bufferedAmount < 75000) {
                     ws.send(cachedMetaPayload);
                     ws.send(buffer, { binary: true });
                   }
@@ -81,7 +95,7 @@ wss.on('connection', async (ws, req) => {
 
             await client.send('Page.startScreencast', {
               format: 'jpeg',
-              quality: 45,
+              quality: 35,
               maxWidth: Math.round(currentSpecs.w),
               maxHeight: Math.round(currentSpecs.h),
               everyNthFrame: 1

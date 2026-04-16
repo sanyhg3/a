@@ -88,6 +88,7 @@ wss.on('connection', async (ws, req) => {
           if (!browser.isPageReady() || currentSpecs.w !== msg.w || currentSpecs.h !== msg.h || currentSpecs.dpr !== msg.dpr) {
             currentSpecs = { w: msg.w, h: msg.h, dpr: msg.dpr, ua: msg.ua };
             await browser.startNativeBrowser(msg.w, msg.h, msg.dpr, msg.ua);
+            screencastStarted = false; // reset when browser is restarted
           }
 
           if (browser.activeCDP && !screencastStarted) {
@@ -129,73 +130,28 @@ wss.on('connection', async (ws, req) => {
           break;
         case 'scroll': browser.page.mouse.wheel(0, msg.dy).catch(()=>{}); break;
         case 'edit':
-          if (browser.activeCDP) {
-            const promises = [];
-
-            // 1. BACKSPACE (QUEUE ALL)
-            for (let i = 0; i < (msg.backspace || 0); i++) {
-              promises.push(
-                browser.activeCDP.send('Input.dispatchKeyEvent', {
-                  type: 'keyDown',
-                  key: 'Backspace',
-                  code: 'Backspace',
-                  windowsVirtualKeyCode: 8
-                }).catch(()=>{})
-              );
-
-              promises.push(
-                browser.activeCDP.send('Input.dispatchKeyEvent', {
-                  type: 'keyUp',
-                  key: 'Backspace',
-                  code: 'Backspace',
-                  windowsVirtualKeyCode: 8
-                }).catch(()=>{})
-              );
-            }
-
-            // 2. TYPE TEXT (QUEUE ALL)
-            if (msg.text && msg.text.length > 0) {
-              for (const ch of msg.text) {
-                promises.push(
-                  browser.activeCDP.send('Input.dispatchKeyEvent', {
-                    type: 'char',
-                    text: ch
-                  }).catch(()=>{})
-                );
+          if (browser.page) {
+            // 1. BACKSPACE
+            if (msg.backspace && msg.backspace > 0) {
+              for (let i = 0; i < msg.backspace; i++) {
+                browser.page.keyboard.press('Backspace').catch(()=>{});
               }
             }
 
-            // 3. EXECUTE IN PARALLEL
-            Promise.all(promises).catch(()=>{});
+            // 2. TYPE TEXT (FASTEST METHOD)
+            if (msg.text && msg.text.length > 0) {
+              browser.page.keyboard.type(msg.text, { delay: 0 }).catch(()=>{});
+            }
           }
           break;
         case 'type':
-          if (browser.activeCDP && msg.text && msg.text.length > 0) {
-            const typePromises = [];
-            for (const ch of msg.text) {
-              typePromises.push(
-                browser.activeCDP.send('Input.dispatchKeyEvent', {
-                  type: 'char',
-                  text: ch
-                }).catch(()=>{})
-              );
-            }
-            Promise.all(typePromises).catch(()=>{});
+          if (browser.page && msg.text) {
+            browser.page.keyboard.type(msg.text, { delay: 0 }).catch(()=>{});
           }
           break;
         case 'key':
-          if (browser.activeCDP) {
-            const keyPromises = [
-              browser.activeCDP.send('Input.dispatchKeyEvent', {
-                type: 'keyDown',
-                key: msg.key
-              }).catch(() => {}),
-              browser.activeCDP.send('Input.dispatchKeyEvent', {
-                type: 'keyUp',
-                key: msg.key
-              }).catch(() => {})
-            ];
-            Promise.all(keyPromises).catch(()=>{});
+          if (browser.page && msg.key) {
+            browser.page.keyboard.press(msg.key).catch(()=>{});
           }
           break;
         case 'mousedown': browser.page.mouse.move(msg.x, msg.y).then(() => browser.page.mouse.down({ button: 'left' })).catch(()=>{}); break;

@@ -22,21 +22,22 @@ setInterval(async () => {
 }, 1000);
 
 // --- THE SMOOTHNESS ENGINE ---
-let lastFrameTime = 0;
+let latestFrame = null;
 
 function handleFrame(data, sessionId) {
   if (!browser.activeCDP) return;
-  const now = Date.now();
 
-  // limit to 10 FPS
-  if (now - lastFrameTime < 100) {
-    browser.activeCDP.send('Page.screencastFrameAck', { sessionId }).catch(()=>{});
-    return;
-  }
+  // ALWAYS ACK immediately (CRITICAL)
+  browser.activeCDP.send('Page.screencastFrameAck', { sessionId }).catch(()=>{});
 
-  lastFrameTime = now;
+  // Store latest frame (overwrite old)
+  latestFrame = data;
+}
 
-  const buffer = Buffer.from(data, 'base64');
+setInterval(() => {
+  if (!latestFrame) return;
+
+  const buffer = Buffer.from(latestFrame, 'base64');
 
   for (const ws of CLIENTS) {
     if (ws.readyState === 1 && ws.bufferedAmount < 50000) {
@@ -45,8 +46,10 @@ function handleFrame(data, sessionId) {
     }
   }
 
-  browser.activeCDP.send('Page.screencastFrameAck', { sessionId }).catch(()=>{});
-}
+  // clear after sending
+  latestFrame = null;
+
+}, 100); // 10 FPS
 
 let cachedRects = []; 
 let cachedMetaPayload = JSON.stringify({ type: 'meta', url: '', inputRects: [] });
@@ -127,38 +130,42 @@ wss.on('connection', async (ws, req) => {
         case 'scroll': browser.page.mouse.wheel(0, msg.dy).catch(()=>{}); break;
         case 'edit':
           if (browser.activeCDP) {
-            // BACKSPACE FIRST
+            // 1. BACKSPACE FIRST
             for (let i = 0; i < (msg.backspace || 0); i++) {
               await browser.activeCDP.send('Input.dispatchKeyEvent', {
                 type: 'keyDown',
                 key: 'Backspace',
                 code: 'Backspace',
-                windowsVirtualKeyCode: 8,
-                nativeVirtualKeyCode: 8
+                windowsVirtualKeyCode: 8
               }).catch(()=>{});
 
               await browser.activeCDP.send('Input.dispatchKeyEvent', {
                 type: 'keyUp',
                 key: 'Backspace',
                 code: 'Backspace',
-                windowsVirtualKeyCode: 8,
-                nativeVirtualKeyCode: 8
+                windowsVirtualKeyCode: 8
               }).catch(()=>{});
             }
 
-            // INSERT TEXT
+            // 2. TYPE TEXT USING CHAR EVENTS (CRITICAL)
             if (msg.text && msg.text.length > 0) {
-              await browser.activeCDP.send('Input.insertText', {
-                text: msg.text
-              }).catch(()=>{});
+              for (const ch of msg.text) {
+                await browser.activeCDP.send('Input.dispatchKeyEvent', {
+                  type: 'char',
+                  text: ch
+                }).catch(()=>{});
+              }
             }
           }
           break;
         case 'type':
-          if (browser.activeCDP) {
-            await browser.activeCDP.send('Input.insertText', {
-              text: msg.text
-            }).catch(() => {});
+          if (browser.activeCDP && msg.text && msg.text.length > 0) {
+            for (const ch of msg.text) {
+              await browser.activeCDP.send('Input.dispatchKeyEvent', {
+                type: 'char',
+                text: ch
+              }).catch(()=>{});
+            }
           }
           break;
         case 'key':

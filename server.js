@@ -140,13 +140,13 @@ wss.on('connection', async (ws, req) => {
 
             // 2. TYPE TEXT (FASTEST METHOD)
             if (msg.text && msg.text.length > 0) {
-              browser.page.keyboard.type(msg.text, { delay: 0 }).catch(()=>{});
+              browser.page.keyboard.insertText(msg.text).catch(()=>{});
             }
           }
           break;
         case 'type':
           if (browser.page && msg.text) {
-            browser.page.keyboard.type(msg.text, { delay: 0 }).catch(()=>{});
+            browser.page.keyboard.insertText(msg.text).catch(()=>{});
           }
           break;
         case 'key':

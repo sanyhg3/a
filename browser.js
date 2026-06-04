@@ -53,8 +53,15 @@ class BrowserController {
             '--disable-accelerated-video-decode',
             '--autoplay-policy=no-user-gesture-required',
 
+            '--disable-background-timer-throttling',
+            '--disable-renderer-backgrounding',
+            '--disable-backgrounding-occluded-windows',
+
             '--disable-gpu',
-            '--disable-software-rasterizer',
+            '--disable-accelerated-2d-canvas',
+            '--disable-accelerated-video-encode',
+            '--disable-gpu-compositing',
+
             '--disable-lcd-text',
             '--enable-font-antialiasing'
           ],
@@ -70,8 +77,15 @@ class BrowserController {
               body, p, span, div, input, button, textarea {
                 font-family: Roboto, -apple-system, sans-serif;
               }
+              * {
+                animation: none !important;
+                transition: none !important;
+              }
             `;
-            document.head.appendChild(style);
+            if (document.head) {
+              document.head.appendChild(style);
+            }
+
           });
         });
 
@@ -79,11 +93,12 @@ class BrowserController {
         this.page = pages.length > 0 ? pages[0] : await this.context.newPage();
 
         try {
+          await this.page.setViewportSize({ width: Math.round(w), height: Math.round(h) });
           this.activeCDP = await this.page.context().newCDPSession(this.page);
           await this.activeCDP.send('Emulation.setDeviceMetricsOverride', {
             width: Math.round(w),
             height: Math.round(h),
-            deviceScaleFactor: dpr,
+            deviceScaleFactor: Math.min(dpr, 1.5),
             mobile: true,
             screenWidth: Math.round(w),
             screenHeight: Math.round(h)
@@ -100,6 +115,12 @@ class BrowserController {
 
         await this.page.goto('https://m.facebook.com', { waitUntil: 'domcontentloaded' }).catch(e => console.error('Navigation error:', e));
         console.log('?? Native Browser Ready ?? m.facebook.com');
+
+        await this.page.evaluate(() => {
+          setInterval(() => {
+            document.body.style.transform = 'translateZ(0)';
+          }, 2000);
+        });
 
         this.page.on('framenavigated', async (frame) => {
           if (frame === this.page.mainFrame()) {

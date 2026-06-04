@@ -36,6 +36,21 @@
 </head>
 <body>
 
+<div id="latency-meter" style="
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  background: rgba(0,0,0,0.6);
+  color: #0f0;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  z-index: 2147483647;
+  display: none;
+">
+  0 ms
+</div>
+
 <div id="viewport">
   <canvas id="screen-canvas"></canvas>
   <div id="input-overlay"></div>
@@ -47,6 +62,7 @@
        enterkeyhint="send" inputmode="text" />
 
 <script>
+const ENABLE_LATENCY_METER = true;
 const $ = (id) => document.getElementById(id);
 const viewport     = $('viewport');
 const canvas       = $('screen-canvas');
@@ -55,7 +71,7 @@ const kbdTrigger   = $('kbd-trigger');
 
 let SERVER_W = window.innerWidth;
 let SERVER_H = window.innerHeight;
-let SERVER_DPR = window.devicePixelRatio || 1;
+let SERVER_DPR = Math.min(window.devicePixelRatio || 1, 1.5);
 
 function lockCanvasDimensions() {
   canvas.width = Math.round(SERVER_W * SERVER_DPR);
@@ -102,25 +118,31 @@ let lastMoveTime = 0;
 let latestFrameBlob = null;
 let isDrawing = false;
 
+let lastPingTime = 0;
+
+function sendPing() {
+  lastPingTime = Date.now();
+  send({ type: 'ping', ts: lastPingTime });
+}
+
+setInterval(sendPing, 1000);
+
 async function drawLatestFrame() {
+  if (isDrawing) return;
   if (!latestFrameBlob) return;
+
   isDrawing = true; 
   const blobToDraw = latestFrameBlob; 
   latestFrameBlob = null; 
 
   try {
     const bitmap = await createImageBitmap(blobToDraw);
-    
-    if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-    }
-    
     ctx.transferFromImageBitmap(bitmap);
-  } catch (err) {}
-
-  isDrawing = false; 
-  requestAnimationFrame(drawLatestFrame);
+  } catch (err) {
+  } finally {
+    isDrawing = false;
+    requestAnimationFrame(drawLatestFrame);
+  }
 }
 
 function send(obj) {
@@ -146,11 +168,21 @@ function connect() {
       lockCanvasDimensions();
   };
 
+
   ws.onmessage = (e) => {
     if (typeof e.data === 'string') {
       try {
-          const msg = JSON.parse(e.data);
-          if (msg.type === 'meta') inputRects = msg.inputRects || [];
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'pong') {
+          const rtt = Date.now() - msg.ts;
+          if (ENABLE_LATENCY_METER) {
+            const el = document.getElementById('latency-meter');
+            el.style.display = 'block';
+            el.textContent = 'RTT: ' + rtt + ' ms';
+          }
+        } else if (msg.type === 'meta') {
+          inputRects = msg.inputRects || [];
+        }
       } catch (err) {}
     } 
     else if (e.data instanceof Blob) {
@@ -283,8 +315,7 @@ kbdTrigger.addEventListener('input', (e) => {
   const backspacesNeeded = previousText.length - commonLength;
   const textToType = currentText.substring(commonLength);
   
-  for (let i = 0; i < backspacesNeeded; i++) send({ type: 'key', key: 'Backspace' });
-  if (textToType.length > 0) send({ type: 'type', text: textToType });
+  send({ type: 'edit', backspace: backspacesNeeded, text: textToType });
   previousText = currentText;
 });
 
